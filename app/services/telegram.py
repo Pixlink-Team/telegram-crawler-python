@@ -7,6 +7,7 @@ from typing import Dict, Optional, Tuple
 import base64
 
 from telethon import TelegramClient, events
+from telethon.sessions import StringSession
 from telethon.errors import FloodWaitError, PasswordHashInvalidError, PhoneCodeInvalidError, SessionPasswordNeededError
 from telethon.network.connection import ConnectionTcpMTProxyRandomizedIntermediate
 from telethon.tl.types import User
@@ -23,7 +24,6 @@ class TelegramService:
 
     def __init__(self):
         self.clients: Dict[str, TelegramClient] = {}
-        self._ensure_session_directory()
         self._proxy = self._build_proxy()
 
     def _build_proxy(self):
@@ -46,17 +46,13 @@ class TelegramService:
             return (settings.mtproto_host, int(settings.mtproto_port), secret)
         return None
 
-    def _ensure_session_directory(self):
-        """Ensure the session directory exists."""
-        os.makedirs(settings.session_directory, exist_ok=True)
 
-    def _get_session_file_path(self, session_id: str) -> str:
-        """Return the filesystem path for a session file."""
-        return os.path.join(settings.session_directory, f"{session_id}")
 
-    async def create_client(self, session_id: str) -> TelegramClient:
+    async def create_client(self, session_id: str, session_string: Optional[str] = None) -> TelegramClient:
         """Create a new Telegram client for a session."""
-        session_file = self._get_session_file_path(session_id)
+        # Use StringSession with optional existing session string
+        string_session = StringSession(session_string) if session_string else StringSession()
+        
         client_kwargs = {}
         if self._proxy:
             client_kwargs.update(
@@ -65,7 +61,7 @@ class TelegramService:
             )
 
         client = TelegramClient(
-            session_file,
+            string_session,
             settings.telegram_api_id,
             settings.telegram_api_hash,
             **client_kwargs,
@@ -90,6 +86,11 @@ class TelegramService:
         client = await self.connect_client(session_id)
         qr_login = await client.qr_login()
         client._qr_login = qr_login  # type: ignore[attr-defined]
+        
+        # Save initial session string to database
+        session_string = client.session.save()
+        await session_manager.update_session_string(session_id, session_string)
+        
         logger.info(f"QR login requested for session: {session_id}")
         return qr_login.url
 
@@ -113,6 +114,11 @@ class TelegramService:
                 raise ValueError("Phone code hash not found. Call send_code_request first.")
 
             user = await client.sign_in(phone, code, phone_code_hash=phone_code_hash)
+            
+            # Save session string after successful login
+            session_string = client.session.save()
+            await session_manager.update_session_string(session_id, session_string)
+            
             logger.info(f"Signed in successfully for session: {session_id}")
             return True, user, False
 
@@ -132,6 +138,11 @@ class TelegramService:
 
         try:
             user = await client.sign_in(password=password)
+            
+            # Save session string after password verification
+            session_string = client.session.save()
+            await session_manager.update_session_string(session_id, session_string)
+            
             logger.info(f"Signed in with password for session: {session_id}")
             return user
         except PasswordHashInvalidError:
@@ -256,7 +267,7 @@ class TelegramService:
             return None
 
     async def disconnect_client(self, session_id: str):
-        """Disconnect and remove a client and its session file."""
+        """Disconnect and remove a client."""
         client = self.clients.get(session_id)
         if client:
             if client.is_connected():
@@ -264,11 +275,6 @@ class TelegramService:
                 await client.disconnect()
 
             del self.clients[session_id]
-
-        session_file = self._get_session_file_path(session_id)
-        session_path = f"{session_file}.session"
-        if os.path.exists(session_path):
-            os.remove(session_path)
 
         logger.info(f"Disconnected and cleaned up session: {session_id}")
 
@@ -280,14 +286,20 @@ class TelegramService:
         return client.is_connected() and await client.is_user_authorized()
 
     async def reconnect_client(self, session_id: str) -> bool:
-        """Reconnect an existing session if its .session file exists."""
+        """Reconnect an existing session from database."""
         try:
-            session_file = self._get_session_file_path(session_id)
-            if not os.path.exists(f"{session_file}.session"):
-                logger.error(f"Session file not found: {session_id}")
+            # Get session string from database
+            session_record = await session_manager.get_session_by_id(session_id)
+            if not session_record:
+                logger.error(f"Session record not found: {session_id}")
+                return False
+            
+            session_string = session_record.get("session_string")
+            if not session_string:
+                logger.error(f"Session string not found: {session_id}")
                 return False
 
-            client = await self.create_client(session_id)
+            client = await self.create_client(session_id, session_string)
             await client.connect()
 
             if await client.is_user_authorized():

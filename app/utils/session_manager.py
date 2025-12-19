@@ -29,6 +29,7 @@ class SessionManager:
                 "agent_id": agent_id,
                 "session_id": session_id,
                 "session_file": session_file,
+                "session_string": None,  # Will be updated after login
                 "phone": None,
                 "user_id": None,
                 "is_active": False,
@@ -126,6 +127,24 @@ class SessionManager:
             
         except Exception as e:
             logger.error(f"Error updating session phone: {e}")
+            raise
+    
+    async def update_session_string(self, session_id: str, session_string: str) -> Optional[Dict[str, Any]]:
+        """Update session string in database"""
+        try:
+            result = await self.collection.find_one_and_update(
+                {"session_id": session_id},
+                {"$set": {"session_string": session_string}},
+                return_document=True
+            )
+            
+            if result:
+                logger.info(f"Updated session string for session {session_id}")
+                return result
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error updating session string: {e}")
             raise
     
     async def update_session_activity(self, session_id: str) -> Optional[Dict[str, Any]]:
