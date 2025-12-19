@@ -43,14 +43,14 @@ def verify_api_key(x_api_key: Optional[str] = Header(None)):
 @router.post("/request-qr", response_model=QRCodeResponse)
 async def request_qr(
     request: RequestQRRequest,
-    authorized: bool = Header(None, alias="X-API-Key", include_in_schema=False)
+    x_api_key: Optional[str] = Header(None)
 ):
     """
     Request QR code for Telegram login
     """
     try:
         # Verify API key
-        verify_api_key(authorized)
+        verify_api_key(x_api_key)
         
         # Generate unique session ID
         session_id = str(uuid.uuid4())
