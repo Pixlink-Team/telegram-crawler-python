@@ -23,6 +23,7 @@ from app.api.schemas import (
     ErrorResponse
 )
 from app.services.telegram import telegram_service
+from app.services.mongodb import mongodb_service
 from app.utils.qr_generator import generate_qr_code
 from app.utils.session_manager import session_manager
 from app.config import settings
@@ -365,4 +366,129 @@ async def send_message(
         raise
     except Exception as e:
         logger.error(f"Error sending message: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/messages/{session_id}")
+async def get_messages(
+    session_id: str,
+    limit: int = 100,
+    skip: int = 0,
+    x_api_key: Optional[str] = Header(None)
+):
+    """
+    Get messages for a session from MongoDB
+    """
+    try:
+        # Verify API key
+        verify_api_key(x_api_key)
+        
+        messages = await mongodb_service.get_messages(
+            session_id=session_id,
+            limit=limit,
+            skip=skip
+        )
+        
+        return {
+            "success": True,
+            "count": len(messages),
+            "messages": messages
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting messages: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/chat-history/{session_id}/{chat_id}")
+async def get_chat_history(
+    session_id: str,
+    chat_id: int,
+    limit: int = 50,
+    x_api_key: Optional[str] = Header(None)
+):
+    """
+    Get chat history for a specific chat
+    """
+    try:
+        # Verify API key
+        verify_api_key(x_api_key)
+        
+        messages = await mongodb_service.get_chat_history(
+            session_id=session_id,
+            chat_id=chat_id,
+            limit=limit
+        )
+        
+        return {
+            "success": True,
+            "session_id": session_id,
+            "chat_id": chat_id,
+            "count": len(messages),
+            "messages": messages
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting chat history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/agent-stats/{agent_id}")
+async def get_agent_stats(
+    agent_id: int,
+    x_api_key: Optional[str] = Header(None)
+):
+    """
+    Get statistics for an agent
+    """
+    try:
+        # Verify API key
+        verify_api_key(x_api_key)
+        
+        stats = await mongodb_service.get_agent_stats(agent_id)
+        
+        return {
+            "success": True,
+            "stats": stats
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting agent stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/events/{session_id}")
+async def get_events(
+    session_id: str,
+    limit: int = 100,
+    x_api_key: Optional[str] = Header(None)
+):
+    """
+    Get events for a session
+    """
+    try:
+        # Verify API key
+        verify_api_key(x_api_key)
+        
+        events = await mongodb_service.get_events(
+            session_id=session_id,
+            limit=limit
+        )
+        
+        return {
+            "success": True,
+            "count": len(events),
+            "events": events
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting events: {e}")
         raise HTTPException(status_code=500, detail=str(e))

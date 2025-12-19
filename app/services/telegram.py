@@ -16,7 +16,7 @@ from datetime import datetime
 import os
 
 from app.config import settings
-from app.services.webhook import WebhookService
+from app.services.mongodb import mongodb_service
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,6 @@ class TelegramService:
     
     def __init__(self):
         self.clients: Dict[str, TelegramClient] = {}
-        self.webhook_service = WebhookService()
         self._ensure_session_directory()
     
     def _ensure_session_directory(self):
@@ -152,13 +151,73 @@ class TelegramService:
                 sender = await event.get_sender()
                 
                 # Send webhook to Laravel
-                await self.webhook_service.send_message_webhook(
-                    agent_id=agent_id,
+                awPrepare message data
+                message_data = {
+                    "id": message.id,
+                    "from": {
+                        "id": sender.id,
+                        "first_name": getattr(sender, "first_name", ""),
+                        "last_name": getattr(sender, "last_name", None),
+                        "username": getattr(sender, "username", None),
+                        "phone": getattr(sender, "phone", None),
+                    },
+                    "chat": {
+                        "id": message.chat_id,
+                        "type": "private" if message.is_private else "group",
+                    },
+                    "text": message.text or "",
+                    "date": message.date.isoformat(),
+                    "reply_to_message_id": message.reply_to_msg_id,
+                    "is_outgoing": False,
+                }
+                
+                # Save to MongoDB
+                await mongodb_service.save_message(
                     session_id=session_id,
-                    event_type="new_message",
-                    message=message,
-                    sender=sender
+                    agent_id=agent_id,
+                    message_data=message_data
                 )
+                
+                # Log event
+            # Save sent message to MongoDB
+            try:
+                me = await client.get_me()
+                message_data = {
+                    "id": sent_message.id,
+                    "from": {
+                        "id": me.id,
+                        "first_name": me.first_name or "",
+                        "last_name": me.last_name,
+                        "username": me.username,
+                        "phone": me.phone,
+                    },
+                    "chat": {
+                        "id": chat_id,
+                        "type": "private",
+                    },
+                    "text": message,
+                    "date": sent_message.date.isoformat(),
+                    "reply_to_message_id": reply_to,
+                    "is_outgoing": True,
+                }
+                
+                # Get agent_id from session
+                from app.utils.session_manager import session_manager
+                session_record = session_manager.get_session_by_id(session_id)
+                if session_record:
+                    await mongodb_service.save_message(
+                        session_id=session_id,
+                        agent_id=session_record.agent_id,
+                        message_data=message_data
+                    )
+            except Exception as e:
+                logger.error(f"Error saving sent message to MongoDB: {e}")
+            
+                await mongodb_service.save_event(
+                    session_id=session_id,
+                    agent_id=agent_id,
+                    event_type="new_message",
+                    metadata={"message_id": message.id, "chat_id": message.chat_id}
                 
             except Exception as e:
                 logger.error(f"Error handling new message: {e}")

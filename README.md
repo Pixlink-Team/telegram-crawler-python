@@ -8,14 +8,16 @@
 - 📱 پشتیبانی از Phone Code و 2FA
 - 💬 دریافت و ارسال پیام‌های تلگرام
 - 🔄 مدیریت Session های متعدد به صورت همزمان
-- 🪝 Webhook به Laravel Backend
+- 🗄️ ذخیره پیام‌ها و رویدادها در MongoDB
 - 🔌 Reconnect خودکار
 - 🐳 Docker Support
 - 📊 RESTful API با FastAPI
+- 📈 آمار و گزارش‌گیری از پیام‌ها
 
 ## 📋 پیش‌نیازها
 
 - Python 3.11+
+- MongoDB (برای ذخیره پیام‌ها)
 - Telegram API Credentials (API ID & API Hash)
 - Redis (اختیاری)
 - Docker & Docker Compose (برای deployment)
@@ -57,8 +59,8 @@ HOST=0.0.0.0
 PORT=8000
 DEBUG=False
 DATABASE_URL=sqlite:///./sessions.db
-REDIS_URL=redis://localhost:6379/0
-LARAVEL_BASE_URL=http://your-laravel-backend.com
+MONGODB_URL=mongodb://localhost:27017
+MONGODB_DATABASE=telegram_serviceackend.com
 WEBHOOK_SECRET_TOKEN=your-secret-token
 API_SECRET_KEY=your-api-secret-key
 ```
@@ -209,6 +211,14 @@ curl -X POST "http://localhost:8000/api/telegram/send-message" \
     "chat_id": 123456789,
     "message": "سلام"
   }'
+
+# دریافت پیام‌ها
+curl -X GET "http://localhost:8000/api/telegram/messages/{session_id}?limit=50" \
+  -H "X-API-Key: your-api-secret-key"
+
+# دریافت آمار
+curl -X GET "http://localhost:8000/api/telegram/agent-stats/123" \
+  -H "X-API-Key: your-api-secret-key"
 ```
 
 ### مثال استفاده با Python
@@ -225,45 +235,95 @@ headers = {
 }
 
 # درخواست QR Code
-response = httpx.post(
-    f"{API_BASE_URL}/api/telegram/request-qr",
-    json={"agent_id": 123},
-    headers=headers
-)
-data = response.json()
-print(f"Session ID: {data['session_id']}")
-print(f"QR Code: {data['qr_code']}")
-```
 
-## 🪝 Webhook به Laravel
+# دریافت پیام‌ها
+res🗄️ ساختار MongoDB
 
-سرویس پایتون به صورت خودکار برای رویدادهای زیر به Laravel Webhook ارسال می‌کند:
+### Collections
 
-```
-POST {LARAVEL_BASE_URL}/api/webhooks/telegram/{agent_id}
-```
-
-**Headers:**
-```
-Authorization: Bearer {WEBHOOK_SECRET_TOKEN}
-Content-Type: application/json
-```
-
-**Event Types:**
-- `new_message`: پیام جدید
-- `message_edited`: ویرایش پیام
-- `session_expired`: Session منقضی شده
-- `connection_lost`: قطع اتصال
-- `connection_restored`: اتصال مجدد
-
-**مثال Payload:**
-```json
+#### 1. messages
+```javascript
 {
-  "event": "new_message",
-  "session_id": "uuid-v4-session-id",
-  "message": {
-    "id": 123456,
-    "from": {
+  "_id": ObjectId,
+  "session_id": "uuid",
+  "agent_id": 123,
+  "message_id": 456,
+  "chat_id": 789,
+  "from_user": {
+    "id": 987654321,
+    "first_name": "علی",
+    "last_name": "محمدی",
+    "username": "ali_m",
+    "phone": "+989123456789"
+  },
+  "chat": {
+    "id": 789,
+    "type": "private"
+  },
+  "text": "سلام",
+  "date": "2025-12-20T10:30:00Z",
+  "reply_to_message_id": null,
+  "is_outgoing": false,
+  "created_at": ISODate("2025-12-20T10:30:00Z")
+}
+```
+
+#### 2. events
+```javascript
+{
+  "_id": ObjectId,
+  "session_id": "uuid",
+  "agent_id": 123,
+  "event_type": "new_message",
+  "metadata": {
+    "message_id": 456,
+    "chat_id": 789
+  },
+  "created_at": ISODate("2025-12-20T10:30:00Z")
+}
+```
+
+### Indexes
+- `messages`: session_id, agent_id, chat_id, message_id, date
+- `events`: session_id, event_type, created_at
+
+## 📊 مثال Query ها
+
+### دریافت همه پیام‌های یک Agent
+```javascript
+db.messages.find({ "agent_id": 123 }).sort({ "date": -1 }).limit(100)
+```
+
+### دریافت تاریخچه چت خاص
+```javascript
+db.messages.find({ 
+  "session_id": "uuid",
+  "chat_id": 789 
+}).sort({ "date": -1 })
+```
+mongodb.py       # MongoDB service
+### آمار پیام‌ها
+```javascript
+db.messages.aggregate([
+  { $match: { "agent_id": 123 } },
+  { $group: { 
+    _id: "$chat_id",
+    count: { $sum: 1 }
+  }}
+])
+```
+
+## 🪝 تغییر از Webhook به MongoDB
+
+این سرویس به جای ارسال webhook به Laravel، تمام پیام‌ها و رویدادها را در MongoDB ذخیره می‌کند. مزایا:
+
+✅ **Performance بهتر**: ذخیره مستقیم در دیتابیس سریع‌تر از HTTP request است
+✅ **Reliability**: در صورت مشکل شبکه، داده از دست نمی‌رود
+✅ **Query آسان**: می‌توانید به راحتی پیام‌ها را جستجو و فیلتر کنید
+✅ **Scalability**: MongoDB برای حجم بالای داده مناسب است
+✅ **Offline Access**: می‌توانید بدون نیاز به Laravel به داده‌ها دسترسی داشته باشید
+
+اگر نیاز به ارسال داده به Laravel دارید، می‌توانید از طریق API endpoints دریافت کنید یا یک worker service اضافه کنید که داده‌ها را از MongoDB بخواند و به Laravel بفرستد. "from": {
       "id": 987654321,
       "first_name": "علی",
       "last_name": "محمدی",

@@ -14,8 +14,8 @@ services:
       - DEBUG=${DEBUG:-False}
       - DATABASE_URL=${DATABASE_URL:-sqlite:///./sessions.db}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
-      - LARAVEL_BASE_URL=${LARAVEL_BASE_URL}
-      - WEBHOOK_SECRET_TOKEN=${WEBHOOK_SECRET_TOKEN}
+      - MONGODB_URL=${MONGODB_URL:-mongodb://mongodb:27017}
+      - MONGODB_DATABASE=${MONGODB_DATABASE:-telegram_service}
       - API_SECRET_KEY=${API_SECRET_KEY}
     volumes:
       - ./sessions:/app/sessions
@@ -23,8 +23,23 @@ services:
     restart: unless-stopped
     depends_on:
       - redis
+      - mongodb
     networks:
       - telegram-network
+
+  mongodb:
+    image: mongo:7
+    container_name: telegram-mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb-data:/data/db
+    environment:
+      - MONGO_INITDB_DATABASE=telegram_service
+    restart: unless-stopped
+    networks:
+      - telegram-network
+  mongodb-data:
 
   redis:
     image: redis:7-alpine

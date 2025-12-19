@@ -9,8 +9,8 @@ from contextlib import asynccontextmanager
 from app.config import settings
 from app.api.routes import router
 from app.services.telegram import telegram_service
+from app.services.mongodb import mongodb_service
 from app.utils.session_manager import session_manager
-from app.middleware import LoggingMiddleware, SecurityHeadersMiddleware
 
 # Configure logging
 logging.basicConfig(
@@ -27,6 +27,14 @@ async def lifespan(app: FastAPI):
     """
     # Startup
     logger.info("Starting Telegram Service...")
+    
+    # Connect to MongoDB
+    try:
+        await mongodb_service.connect()
+        logger.info("Connected to MongoDB successfully")
+    except Exception as e:
+        logger.error(f"Failed to connect to MongoDB: {e}")
+        raise
     
     # Reconnect existing sessions
     try:
@@ -61,6 +69,13 @@ async def lifespan(app: FastAPI):
     
     # Disconnect all clients gracefully
     for session_id in list(telegram_service.clients.keys()):
+    # Disconnect from MongoDB
+    try:
+        await mongodb_service.disconnect()
+        logger.info("Disconnected from MongoDB")
+    except Exception as e:
+        logger.error(f"Error disconnecting from MongoDB: {e}")
+    
         try:
             client = telegram_service.clients[session_id]
             if client.is_connected():
@@ -80,11 +95,7 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Configure this properly in production
-    allow_credentials=True,
+#
     allow_methods=["*"],
     allow_headers=["*"],
 )

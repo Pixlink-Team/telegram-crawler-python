@@ -23,9 +23,9 @@ class Settings(BaseSettings):
     # Redis
     redis_url: str = "redis://localhost:6379/0"
     
-    # Laravel Backend
-    laravel_base_url: str
-    webhook_secret_token: str
+    # MongoDB
+    mongodb_url: str = "mongodb://localhost:27017"
+    mongodb_database: str = "telegram_service"
     
     # Security
     api_secret_key: str
