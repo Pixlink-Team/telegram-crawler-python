@@ -12,6 +12,12 @@ class RequestQRRequest(BaseModel):
     agent_id: int = Field(..., description="Agent ID")
 
 
+class RequestPhoneCodeRequest(BaseModel):
+    """Request schema for phone code login"""
+    agent_id: int = Field(..., description="Agent ID")
+    phone: str = Field(..., description="Phone number with country code (e.g., +989123456789)")
+
+
 class VerifyCodeRequest(BaseModel):
     """Request schema for code verification"""
     session_id: str = Field(..., description="Session ID")
@@ -44,6 +50,14 @@ class QRCodeResponse(BaseModel):
     session_id: str
     qr_code: str = Field(..., description="Base64 encoded QR code image")
     expires_in: int = Field(..., description="Expiration time in seconds")
+
+
+class PhoneCodeResponse(BaseModel):
+    """Response schema for phone code request"""
+    success: bool
+    session_id: str
+    phone: str
+    message: str = Field(..., description="Success message")
 
 
 class VerifyCodeResponse(BaseModel):

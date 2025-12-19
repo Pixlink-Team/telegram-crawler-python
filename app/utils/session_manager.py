@@ -125,6 +125,28 @@ class SessionManager:
         finally:
             db.close()
     
+    def update_session_phone(self, session_id: str, phone: str) -> Optional[TelegramSession]:
+        """Update session phone number"""
+        db = self.get_db()
+        try:
+            session = db.query(TelegramSession).filter(
+                TelegramSession.session_id == session_id
+            ).first()
+            
+            if session:
+                session.phone = phone
+                db.commit()
+                db.refresh(session)
+                logger.info(f"Updated phone for session {session_id}")
+                return session
+            return None
+        except SQLAlchemyError as e:
+            db.rollback()
+            logger.error(f"Error updating session phone: {e}")
+            raise
+        finally:
+            db.close()
+    
     def update_session_activity(self, session_id: str) -> Optional[TelegramSession]:
         """Update last activity timestamp"""
         db = self.get_db()

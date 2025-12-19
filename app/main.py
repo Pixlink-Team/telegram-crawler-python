@@ -10,6 +10,7 @@ from app.config import settings
 from app.api.routes import router
 from app.services.telegram import telegram_service
 from app.utils.session_manager import session_manager
+from app.middleware import LoggingMiddleware, SecurityHeadersMiddleware
 
 # Configure logging
 logging.basicConfig(
@@ -87,6 +88,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Add custom middlewares
+app.add_middleware(LoggingMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 
 # Include routers
 app.include_router(router)

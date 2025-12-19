@@ -8,7 +8,9 @@ import uuid
 
 from app.api.schemas import (
     RequestQRRequest,
+    RequestPhoneCodeRequest,
     QRCodeResponse,
+    PhoneCodeResponse,
     VerifyCodeRequest,
     VerifyCodeResponse,
     VerifyPasswordRequest,
@@ -77,6 +79,49 @@ async def request_qr(
         
     except Exception as e:
         logger.error(f"Error requesting QR code: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/request-phone-code", response_model=PhoneCodeResponse)
+async def request_phone_code(
+    request: RequestPhoneCodeRequest,
+    x_api_key: Optional[str] = Header(None)
+):
+    """
+    Request phone code for Telegram login
+    """
+    try:
+        # Verify API key
+        verify_api_key(x_api_key)
+        
+        # Generate unique session ID
+        session_id = str(uuid.uuid4())
+        
+        # Create session record with phone
+        session_file = f"{session_id}"
+        session_record = session_manager.create_session(
+            agent_id=request.agent_id,
+            session_id=session_id,
+            session_file=session_file
+        )
+        
+        # Update session with phone number using proper method
+        session_manager.update_session_phone(session_id, request.phone)
+        
+        # Request code from Telegram
+        await telegram_service.send_code_request(session_id, request.phone)
+        
+        logger.info(f"Phone code requested for agent {request.agent_id}, phone: {request.phone}")
+        
+        return PhoneCodeResponse(
+            success=True,
+            session_id=session_id,
+            phone=request.phone,
+            message="کد تایید به تلگرام شما ارسال شد"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error requesting phone code: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
