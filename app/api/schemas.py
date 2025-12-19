@@ -30,6 +30,21 @@ class VerifyPasswordRequest(BaseModel):
     password: str = Field(..., description="2FA password")
 
 
+class WaitQRLoginRequest(BaseModel):
+    """Request schema for waiting QR login completion"""
+    session_id: str = Field(..., description="Session ID")
+    timeout: Optional[int] = Field(300, description="Timeout in seconds (default 300)")
+
+
+class WaitQRLoginResponse(BaseModel):
+    """Response schema for waiting QR login completion"""
+    success: bool
+    connected: bool
+    phone: Optional[str] = None
+    user_id: Optional[int] = None
+    message: Optional[str] = None
+
+
 class DisconnectRequest(BaseModel):
     """Request schema for disconnection"""
     session_id: str = Field(..., description="Session ID")

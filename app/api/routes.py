@@ -15,6 +15,8 @@ from app.api.schemas import (
     VerifyCodeResponse,
     VerifyPasswordRequest,
     VerifyPasswordResponse,
+    WaitQRLoginRequest,
+    WaitQRLoginResponse,
     DisconnectRequest,
     DisconnectResponse,
     StatusResponse,
@@ -252,6 +254,67 @@ async def verify_password(
         raise
     except Exception as e:
         logger.error(f"Error verifying password: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/wait-qr-login", response_model=WaitQRLoginResponse)
+async def wait_qr_login(
+    request: WaitQRLoginRequest,
+    x_api_key: Optional[str] = Header(None)
+):
+    """
+    Wait for QR code to be scanned (for accounts without 2FA)
+    """
+    try:
+        # Verify API key
+        verify_api_key(x_api_key)
+        
+        # Get session record
+        session_record = await session_manager.get_session_by_id(request.session_id)
+        if not session_record:
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        # Wait for QR login
+        success, user = await telegram_service.wait_for_qr_login(
+            session_id=request.session_id,
+            timeout=request.timeout or 300
+        )
+        
+        if not success or not user:
+            return WaitQRLoginResponse(
+                success=False,
+                connected=False,
+                message="QR کد اسکن نشد یا زمان آن به پایان رسید"
+            )
+        
+        # Update session record
+        await session_manager.update_session_connected(
+            session_id=request.session_id,
+            phone=user.phone or "",
+            user_id=user.id,
+            is_active=True
+        )
+        
+        # Setup message handler
+        await telegram_service.setup_message_handler(
+            session_id=request.session_id,
+            agent_id=session_record["agent_id"]
+        )
+        
+        logger.info(f"QR login completed for session {request.session_id}")
+        
+        return WaitQRLoginResponse(
+            success=True,
+            connected=True,
+            phone=user.phone,
+            user_id=user.id,
+            message="ورود با موفقیت انجام شد"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error waiting for QR login: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

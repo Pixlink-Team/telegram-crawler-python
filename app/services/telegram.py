@@ -86,6 +86,7 @@ class TelegramService:
         client = await self.connect_client(session_id)
         qr_login = await client.qr_login()
         client._qr_login = qr_login  # type: ignore[attr-defined]
+        client._qr_login_completed = False  # type: ignore[attr-defined]
         
         # Save initial session string to database
         session_string = client.session.save()
@@ -94,6 +95,44 @@ class TelegramService:
         logger.info(f"QR login requested for session: {session_id}")
         return qr_login.url
 
+    async def wait_for_qr_login(self, session_id: str, timeout: int = 300) -> Tuple[bool, Optional[User]]:
+        """Wait for QR code to be scanned and handle login."""
+        client = self.clients.get(session_id)
+        if not client:
+            raise ValueError("Session not found")
+        
+        if not hasattr(client, "_qr_login"):
+            raise ValueError("QR login not initiated")
+        
+        if getattr(client, "_qr_login_completed", False):
+            # Already completed
+            if await client.is_user_authorized():
+                user = await client.get_me()
+                return True, user
+            return False, None
+        
+        try:
+            qr_login = client._qr_login  # type: ignore[attr-defined]
+            
+            # Wait for QR scan (with timeout)
+            import asyncio
+            try:
+                user = await asyncio.wait_for(qr_login.wait(), timeout=timeout)
+                client._qr_login_completed = True  # type: ignore[attr-defined]
+                
+                # Save session string after successful login
+                session_string = client.session.save()
+                await session_manager.update_session_string(session_id, session_string)
+                
+                logger.info(f"QR login completed for session: {session_id}")
+                return True, user
+            except asyncio.TimeoutError:
+                logger.warning(f"QR login timeout for session: {session_id}")
+                return False, None
+        except Exception as e:
+            logger.error(f"Error waiting for QR login {session_id}: {e}")
+            return False, None
+    
     async def send_code_request(self, session_id: str, phone: str) -> str:
         """Send code request for phone-based login."""
         client = await self.connect_client(session_id)
@@ -137,6 +176,7 @@ class TelegramService:
             raise ValueError("Session not found")
 
         try:
+            # For phone login with 2FA
             user = await client.sign_in(password=password)
             
             # Save session string after password verification
@@ -148,6 +188,9 @@ class TelegramService:
         except PasswordHashInvalidError:
             logger.error(f"Invalid password for session: {session_id}")
             raise ValueError("رمز عبور نامعتبر است")
+        except Exception as e:
+            logger.error(f"Error verifying password for session {session_id}: {e}")
+            raise ValueError(f"خطا در تایید رمز عبور: {str(e)}")
 
     async def setup_message_handler(self, session_id: str, agent_id: Optional[int]):
         """Attach a message handler that saves inbound messages to MongoDB."""
