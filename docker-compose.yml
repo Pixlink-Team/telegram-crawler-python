@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  telegram-service:
+    build: .
+    container_name: telegram-service
+    ports:
+      - "8000:8000"
+    environment:
+      - TELEGRAM_API_ID=${TELEGRAM_API_ID}
+      - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
+      - HOST=0.0.0.0
+      - PORT=8000
+      - DEBUG=${DEBUG:-False}
+      - DATABASE_URL=${DATABASE_URL:-sqlite:///./sessions.db}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - LARAVEL_BASE_URL=${LARAVEL_BASE_URL}
+      - WEBHOOK_SECRET_TOKEN=${WEBHOOK_SECRET_TOKEN}
+      - API_SECRET_KEY=${API_SECRET_KEY}
+    volumes:
+      - ./sessions:/app/sessions
+      - ./sessions.db:/app/sessions.db
+    restart: unless-stopped
+    depends_on:
+      - redis
+    networks:
+      - telegram-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: telegram-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    networks:
+      - telegram-network
+
+volumes:
+  redis-data:
+
+networks:
+  telegram-network:
+    driver: bridge

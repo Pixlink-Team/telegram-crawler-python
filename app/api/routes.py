@@ -1,0 +1,323 @@
+"""
+API routes for Telegram service
+"""
+import logging
+from fastapi import APIRouter, HTTPException, Header
+from typing import Optional
+import uuid
+
+from app.api.schemas import (
+    RequestQRRequest,
+    QRCodeResponse,
+    VerifyCodeRequest,
+    VerifyCodeResponse,
+    VerifyPasswordRequest,
+    VerifyPasswordResponse,
+    DisconnectRequest,
+    DisconnectResponse,
+    StatusResponse,
+    SendMessageRequest,
+    SendMessageResponse,
+    ErrorResponse
+)
+from app.services.telegram import telegram_service
+from app.utils.qr_generator import generate_qr_code
+from app.utils.session_manager import session_manager
+from app.config import settings
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/telegram", tags=["telegram"])
+
+
+def verify_api_key(x_api_key: Optional[str] = Header(None)):
+    """Verify API key"""
+    if x_api_key != settings.api_secret_key:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    return True
+
+
+@router.post("/request-qr", response_model=QRCodeResponse)
+async def request_qr(
+    request: RequestQRRequest,
+    authorized: bool = Header(None, alias="X-API-Key", include_in_schema=False)
+):
+    """
+    Request QR code for Telegram login
+    """
+    try:
+        # Verify API key
+        verify_api_key(authorized)
+        
+        # Generate unique session ID
+        session_id = str(uuid.uuid4())
+        
+        # Create session record
+        session_file = f"{session_id}"
+        session_record = session_manager.create_session(
+            agent_id=request.agent_id,
+            session_id=session_id,
+            session_file=session_file
+        )
+        
+        # Request QR code from Telegram
+        qr_url = await telegram_service.request_qr_login(session_id)
+        
+        # Generate QR code image
+        qr_code_base64 = generate_qr_code(qr_url)
+        
+        logger.info(f"QR code generated for agent {request.agent_id}")
+        
+        return QRCodeResponse(
+            success=True,
+            session_id=session_id,
+            qr_code=qr_code_base64,
+            expires_in=settings.qr_code_expires_in
+        )
+        
+    except Exception as e:
+        logger.error(f"Error requesting QR code: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/verify-code", response_model=VerifyCodeResponse)
+async def verify_code(
+    request: VerifyCodeRequest,
+    x_api_key: Optional[str] = Header(None)
+):
+    """
+    Verify phone code from Telegram
+    """
+    try:
+        # Verify API key
+        verify_api_key(x_api_key)
+        
+        # Get session record
+        session_record = session_manager.get_session_by_id(request.session_id)
+        if not session_record:
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        # We need phone number - this should be provided in request
+        # For now, we'll assume it's stored in metadata
+        phone = session_record.phone
+        if not phone:
+            raise HTTPException(status_code=400, detail="Phone number not found. Use send_code_request first.")
+        
+        # Verify code
+        success, user, requires_password = await telegram_service.verify_code(
+            session_id=request.session_id,
+            phone=phone,
+            code=request.code
+        )
+        
+        if not success:
+            return VerifyCodeResponse(
+                success=False,
+                connected=False,
+                error="کد نامعتبر است"
+            )
+        
+        if requires_password:
+            return VerifyCodeResponse(
+                success=True,
+                connected=False,
+                requires_password=True
+            )
+        
+        # Update session record
+        session_manager.update_session_connected(
+            session_id=request.session_id,
+            phone=user.phone or phone,
+            user_id=user.id,
+            is_active=True
+        )
+        
+        # Setup message handler
+        await telegram_service.setup_message_handler(
+            session_id=request.session_id,
+            agent_id=session_record.agent_id
+        )
+        
+        logger.info(f"Code verified successfully for session {request.session_id}")
+        
+        return VerifyCodeResponse(
+            success=True,
+            connected=True,
+            phone=user.phone or phone,
+            user_id=user.id
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error verifying code: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/verify-password", response_model=VerifyPasswordResponse)
+async def verify_password(
+    request: VerifyPasswordRequest,
+    x_api_key: Optional[str] = Header(None)
+):
+    """
+    Verify 2FA password
+    """
+    try:
+        # Verify API key
+        verify_api_key(x_api_key)
+        
+        # Get session record
+        session_record = session_manager.get_session_by_id(request.session_id)
+        if not session_record:
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        # Verify password
+        user = await telegram_service.verify_password(
+            session_id=request.session_id,
+            password=request.password
+        )
+        
+        # Update session record
+        session_manager.update_session_connected(
+            session_id=request.session_id,
+            phone=user.phone,
+            user_id=user.id,
+            is_active=True
+        )
+        
+        # Setup message handler
+        await telegram_service.setup_message_handler(
+            session_id=request.session_id,
+            agent_id=session_record.agent_id
+        )
+        
+        logger.info(f"Password verified successfully for session {request.session_id}")
+        
+        return VerifyPasswordResponse(
+            success=True,
+            connected=True,
+            phone=user.phone,
+            user_id=user.id
+        )
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error verifying password: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/disconnect", response_model=DisconnectResponse)
+async def disconnect(
+    request: DisconnectRequest,
+    x_api_key: Optional[str] = Header(None)
+):
+    """
+    Disconnect and remove session
+    """
+    try:
+        # Verify API key
+        verify_api_key(x_api_key)
+        
+        # Disconnect client
+        await telegram_service.disconnect_client(request.session_id)
+        
+        # Delete session record
+        session_manager.delete_session(request.session_id)
+        
+        logger.info(f"Session disconnected: {request.session_id}")
+        
+        return DisconnectResponse(
+            success=True,
+            message="اتصال با موفقیت قطع شد"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error disconnecting: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/status/{session_id}", response_model=StatusResponse)
+async def get_status(
+    session_id: str,
+    x_api_key: Optional[str] = Header(None)
+):
+    """
+    Get session status
+    """
+    try:
+        # Verify API key
+        verify_api_key(x_api_key)
+        
+        # Get session record
+        session_record = session_manager.get_session_by_id(session_id)
+        if not session_record:
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        # Check if connected
+        is_connected = await telegram_service.is_connected(session_id)
+        
+        # Update activity
+        if is_connected:
+            session_manager.update_session_activity(session_id)
+        
+        return StatusResponse(
+            success=True,
+            connected=is_connected and session_record.is_active,
+            phone=session_record.phone,
+            user_id=session_record.user_id,
+            last_activity=session_record.last_activity.isoformat() if session_record.last_activity else None
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/send-message", response_model=SendMessageResponse)
+async def send_message(
+    request: SendMessageRequest,
+    x_api_key: Optional[str] = Header(None)
+):
+    """
+    Send message via Telegram
+    """
+    try:
+        # Verify API key
+        verify_api_key(x_api_key)
+        
+        # Get session record
+        session_record = session_manager.get_session_by_id(request.session_id)
+        if not session_record:
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        # Send message
+        message_id, sent_at = await telegram_service.send_message(
+            session_id=request.session_id,
+            chat_id=request.chat_id,
+            message=request.message,
+            reply_to=request.reply_to
+        )
+        
+        # Update activity
+        session_manager.update_session_activity(request.session_id)
+        
+        logger.info(f"Message sent for session {request.session_id}")
+        
+        return SendMessageResponse(
+            success=True,
+            message_id=message_id,
+            sent_at=sent_at.isoformat()
+        )
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error sending message: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
