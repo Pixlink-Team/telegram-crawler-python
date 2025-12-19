@@ -37,7 +37,6 @@ services:
     restart: unless-stopped
     networks:
       - telegram-network
-  mongodb-data:
 
   redis:
     image: redis:7-alpine
