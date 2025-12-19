@@ -12,14 +12,12 @@ services:
       - HOST=0.0.0.0
       - PORT=8000
       - DEBUG=${DEBUG:-False}
-      - DATABASE_URL=${DATABASE_URL:-sqlite:///./sessions.db}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - MONGODB_URL=${MONGODB_URL:-mongodb://mongodb:27017}
       - MONGODB_DATABASE=${MONGODB_DATABASE:-telegram_service}
       - API_SECRET_KEY=${API_SECRET_KEY}
     volumes:
       - ./sessions:/app/sessions
-      - ./sessions.db:/app/sessions.db
     restart: unless-stopped
     depends_on:
       - redis

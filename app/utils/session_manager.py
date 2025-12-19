@@ -1,215 +1,179 @@
 """
-Session manager utility for database operations
+Session manager utility for MongoDB operations
 """
 import logging
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, Session
-from sqlalchemy.exc import SQLAlchemyError
 import uuid
-
-from app.config import settings
-from app.models.session import Base, TelegramSession
 
 logger = logging.getLogger(__name__)
 
 
 class SessionManager:
-    """Manager for database session operations"""
+    """Manager for session operations in MongoDB"""
     
     def __init__(self):
-        self.engine = create_engine(
-            settings.database_url,
-            connect_args={"check_same_thread": False} if "sqlite" in settings.database_url else {}
-        )
-        Base.metadata.create_all(bind=self.engine)
-        self.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
+        self.db = None
+        self.collection = None
     
-    def get_db(self) -> Session:
-        """Get database session"""
-        db = self.SessionLocal()
-        try:
-            return db
-        except Exception:
-            db.close()
-            raise
+    def set_mongodb_service(self, mongodb_service):
+        """Set MongoDB service instance"""
+        self.db = mongodb_service.db
+        self.collection = mongodb_service.sessions_collection
     
-    def create_session(self, agent_id: int, session_id: str, session_file: str) -> TelegramSession:
+    async def create_session(self, agent_id: int, session_id: str, session_file: str) -> Dict[str, Any]:
         """Create a new session record"""
-        db = self.get_db()
         try:
-            session = TelegramSession(
-                id=str(uuid.uuid4()),
-                agent_id=agent_id,
-                session_id=session_id,
-                session_file=session_file,
-                is_active=False,
-                metadata={}
-            )
-            db.add(session)
-            db.commit()
-            db.refresh(session)
+            session = {
+                "_id": str(uuid.uuid4()),
+                "agent_id": agent_id,
+                "session_id": session_id,
+                "session_file": session_file,
+                "phone": None,
+                "user_id": None,
+                "is_active": False,
+                "connected_at": None,
+                "last_activity": datetime.utcnow(),
+                "metadata": {},
+                "created_at": datetime.utcnow(),
+            }
+            
+            await self.collection.insert_one(session)
             logger.info(f"Created session record for session_id: {session_id}")
+            
             return session
-        except SQLAlchemyError as e:
-            db.rollback()
+            
+        except Exception as e:
             logger.error(f"Error creating session: {e}")
             raise
-        finally:
-            db.close()
     
-    def get_session_by_id(self, session_id: str) -> Optional[TelegramSession]:
+    async def get_session_by_id(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Get session by session_id"""
-        db = self.get_db()
         try:
-            session = db.query(TelegramSession).filter(
-                TelegramSession.session_id == session_id
-            ).first()
+            session = await self.collection.find_one({"session_id": session_id})
             return session
-        finally:
-            db.close()
+        except Exception as e:
+            logger.error(f"Error getting session: {e}")
+            return None
     
-    def get_session_by_agent(self, agent_id: int) -> Optional[TelegramSession]:
+    async def get_session_by_agent(self, agent_id: int) -> Optional[Dict[str, Any]]:
         """Get active session by agent_id"""
-        db = self.get_db()
         try:
-            session = db.query(TelegramSession).filter(
-                TelegramSession.agent_id == agent_id,
-                TelegramSession.is_active == True
-            ).first()
+            session = await self.collection.find_one({
+                "agent_id": agent_id,
+                "is_active": True
+            })
             return session
-        finally:
-            db.close()
+        except Exception as e:
+            logger.error(f"Error getting session by agent: {e}")
+            return None
     
-    def get_all_active_sessions(self) -> List[TelegramSession]:
+    async def get_all_active_sessions(self) -> List[Dict[str, Any]]:
         """Get all active sessions"""
-        db = self.get_db()
         try:
-            sessions = db.query(TelegramSession).filter(
-                TelegramSession.is_active == True
-            ).all()
+            cursor = self.collection.find({"is_active": True})
+            sessions = await cursor.to_list(length=None)
             return sessions
-        finally:
-            db.close()
+        except Exception as e:
+            logger.error(f"Error getting active sessions: {e}")
+            return []
     
-    def update_session_connected(
+    async def update_session_connected(
         self,
         session_id: str,
         phone: str,
         user_id: int,
         is_active: bool = True
-    ) -> Optional[TelegramSession]:
+    ) -> Optional[Dict[str, Any]]:
         """Update session after successful connection"""
-        db = self.get_db()
         try:
-            session = db.query(TelegramSession).filter(
-                TelegramSession.session_id == session_id
-            ).first()
+            result = await self.collection.find_one_and_update(
+                {"session_id": session_id},
+                {
+                    "$set": {
+                        "phone": phone,
+                        "user_id": user_id,
+                        "is_active": is_active,
+                        "connected_at": datetime.utcnow(),
+                        "last_activity": datetime.utcnow(),
+                    }
+                },
+                return_document=True
+            )
             
-            if session:
-                session.phone = phone
-                session.user_id = user_id
-                session.is_active = is_active
-                session.connected_at = datetime.utcnow()
-                session.last_activity = datetime.utcnow()
-                db.commit()
-                db.refresh(session)
+            if result:
                 logger.info(f"Updated session {session_id} as connected")
-                return session
+                return result
             return None
-        except SQLAlchemyError as e:
-            db.rollback()
+            
+        except Exception as e:
             logger.error(f"Error updating session: {e}")
             raise
-        finally:
-            db.close()
     
-    def update_session_phone(self, session_id: str, phone: str) -> Optional[TelegramSession]:
+    async def update_session_phone(self, session_id: str, phone: str) -> Optional[Dict[str, Any]]:
         """Update session phone number"""
-        db = self.get_db()
         try:
-            session = db.query(TelegramSession).filter(
-                TelegramSession.session_id == session_id
-            ).first()
+            result = await self.collection.find_one_and_update(
+                {"session_id": session_id},
+                {"$set": {"phone": phone}},
+                return_document=True
+            )
             
-            if session:
-                session.phone = phone
-                db.commit()
-                db.refresh(session)
+            if result:
                 logger.info(f"Updated phone for session {session_id}")
-                return session
+                return result
             return None
-        except SQLAlchemyError as e:
-            db.rollback()
+            
+        except Exception as e:
             logger.error(f"Error updating session phone: {e}")
             raise
-        finally:
-            db.close()
     
-    def update_session_activity(self, session_id: str) -> Optional[TelegramSession]:
+    async def update_session_activity(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Update last activity timestamp"""
-        db = self.get_db()
         try:
-            session = db.query(TelegramSession).filter(
-                TelegramSession.session_id == session_id
-            ).first()
+            result = await self.collection.find_one_and_update(
+                {"session_id": session_id},
+                {"$set": {"last_activity": datetime.utcnow()}},
+                return_document=True
+            )
             
-            if session:
-                session.last_activity = datetime.utcnow()
-                db.commit()
-                db.refresh(session)
-                return session
-            return None
-        except SQLAlchemyError as e:
-            db.rollback()
+            return result
+            
+        except Exception as e:
             logger.error(f"Error updating session activity: {e}")
             raise
-        finally:
-            db.close()
     
-    def delete_session(self, session_id: str) -> bool:
+    async def delete_session(self, session_id: str) -> bool:
         """Delete a session record"""
-        db = self.get_db()
         try:
-            session = db.query(TelegramSession).filter(
-                TelegramSession.session_id == session_id
-            ).first()
+            result = await self.collection.delete_one({"session_id": session_id})
             
-            if session:
-                db.delete(session)
-                db.commit()
+            if result.deleted_count > 0:
                 logger.info(f"Deleted session record: {session_id}")
                 return True
             return False
-        except SQLAlchemyError as e:
-            db.rollback()
+            
+        except Exception as e:
             logger.error(f"Error deleting session: {e}")
             raise
-        finally:
-            db.close()
     
-    def deactivate_session(self, session_id: str) -> Optional[TelegramSession]:
+    async def deactivate_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Deactivate a session"""
-        db = self.get_db()
         try:
-            session = db.query(TelegramSession).filter(
-                TelegramSession.session_id == session_id
-            ).first()
+            result = await self.collection.find_one_and_update(
+                {"session_id": session_id},
+                {"$set": {"is_active": False}},
+                return_document=True
+            )
             
-            if session:
-                session.is_active = False
-                db.commit()
-                db.refresh(session)
+            if result:
                 logger.info(f"Deactivated session: {session_id}")
-                return session
+                return result
             return None
-        except SQLAlchemyError as e:
-            db.rollback()
+            
+        except Exception as e:
             logger.error(f"Error deactivating session: {e}")
             raise
-        finally:
-            db.close()
 
 
 # Global instance

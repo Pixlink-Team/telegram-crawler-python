@@ -17,9 +17,6 @@ class Settings(BaseSettings):
     port: int = 8000
     debug: bool = False
     
-    # Database
-    database_url: str = "sqlite:///./sessions.db"
-    
     # Redis
     redis_url: str = "redis://localhost:6379/0"
     

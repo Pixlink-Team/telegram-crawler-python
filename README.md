@@ -8,7 +8,8 @@
 - 📱 پشتیبانی از Phone Code و 2FA
 - 💬 دریافت و ارسال پیام‌های تلگرام
 - 🔄 مدیریت Session های متعدد به صورت همزمان
-- 🗄️ ذخیره پیام‌ها و رویدادها در MongoDB
+- 🗄️ ذخیره تمام داده‌ها در MongoDB (sessions, messages, events)
+- ⚡ عملیات Async با Motor (MongoDB async driver)
 - 🔌 Reconnect خودکار
 - 🐳 Docker Support
 - 📊 RESTful API با FastAPI
@@ -17,9 +18,9 @@
 ## 📋 پیش‌نیازها
 
 - Python 3.11+
-- MongoDB (برای ذخیره پیام‌ها)
+- MongoDB 5.0+ (برای ذخیره تمام داده‌ها)
 - Telegram API Credentials (API ID & API Hash)
-- Redis (اختیاری)
+- Redis (برای caching)
 - Docker & Docker Compose (برای deployment)
 
 ## 🚀 نصب و راه‌اندازی

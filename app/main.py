@@ -32,6 +32,11 @@ async def lifespan(app: FastAPI):
     try:
         await mongodb_service.connect()
         logger.info("Connected to MongoDB successfully")
+        
+        # Initialize session manager with MongoDB
+        session_manager.set_mongodb_service(mongodb_service)
+        logger.info("Session manager initialized with MongoDB")
+        
     except Exception as e:
         logger.error(f"Failed to connect to MongoDB: {e}")
         raise

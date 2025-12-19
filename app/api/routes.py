@@ -57,7 +57,7 @@ async def request_qr(
         
         # Create session record
         session_file = f"{session_id}"
-        session_record = session_manager.create_session(
+        session_record = await session_manager.create_session(
             agent_id=request.agent_id,
             session_id=session_id,
             session_file=session_file
@@ -100,14 +100,14 @@ async def request_phone_code(
         
         # Create session record with phone
         session_file = f"{session_id}"
-        session_record = session_manager.create_session(
+        session_record = await session_manager.create_session(
             agent_id=request.agent_id,
             session_id=session_id,
             session_file=session_file
         )
         
         # Update session with phone number using proper method
-        session_manager.update_session_phone(session_id, request.phone)
+        await session_manager.update_session_phone(session_id, request.phone)
         
         # Request code from Telegram
         await telegram_service.send_code_request(session_id, request.phone)
@@ -139,13 +139,13 @@ async def verify_code(
         verify_api_key(x_api_key)
         
         # Get session record
-        session_record = session_manager.get_session_by_id(request.session_id)
+        session_record = await session_manager.get_session_by_id(request.session_id)
         if not session_record:
             raise HTTPException(status_code=404, detail="Session not found")
         
         # We need phone number - this should be provided in request
         # For now, we'll assume it's stored in metadata
-        phone = session_record.phone
+        phone = session_record.get("phone")
         if not phone:
             raise HTTPException(status_code=400, detail="Phone number not found. Use send_code_request first.")
         
@@ -171,7 +171,7 @@ async def verify_code(
             )
         
         # Update session record
-        session_manager.update_session_connected(
+        await session_manager.update_session_connected(
             session_id=request.session_id,
             phone=user.phone or phone,
             user_id=user.id,
@@ -181,7 +181,7 @@ async def verify_code(
         # Setup message handler
         await telegram_service.setup_message_handler(
             session_id=request.session_id,
-            agent_id=session_record.agent_id
+            agent_id=session_record["agent_id"]
         )
         
         logger.info(f"Code verified successfully for session {request.session_id}")
@@ -213,7 +213,7 @@ async def verify_password(
         verify_api_key(x_api_key)
         
         # Get session record
-        session_record = session_manager.get_session_by_id(request.session_id)
+        session_record = await session_manager.get_session_by_id(request.session_id)
         if not session_record:
             raise HTTPException(status_code=404, detail="Session not found")
         
@@ -224,7 +224,7 @@ async def verify_password(
         )
         
         # Update session record
-        session_manager.update_session_connected(
+        await session_manager.update_session_connected(
             session_id=request.session_id,
             phone=user.phone,
             user_id=user.id,
@@ -234,7 +234,7 @@ async def verify_password(
         # Setup message handler
         await telegram_service.setup_message_handler(
             session_id=request.session_id,
-            agent_id=session_record.agent_id
+            agent_id=session_record["agent_id"]
         )
         
         logger.info(f"Password verified successfully for session {request.session_id}")
@@ -271,7 +271,7 @@ async def disconnect(
         await telegram_service.disconnect_client(request.session_id)
         
         # Delete session record
-        session_manager.delete_session(request.session_id)
+        await session_manager.delete_session(request.session_id)
         
         logger.info(f"Session disconnected: {request.session_id}")
         
@@ -298,7 +298,7 @@ async def get_status(
         verify_api_key(x_api_key)
         
         # Get session record
-        session_record = session_manager.get_session_by_id(session_id)
+        session_record = await session_manager.get_session_by_id(session_id)
         if not session_record:
             raise HTTPException(status_code=404, detail="Session not found")
         
@@ -307,14 +307,14 @@ async def get_status(
         
         # Update activity
         if is_connected:
-            session_manager.update_session_activity(session_id)
+            await session_manager.update_session_activity(session_id)
         
         return StatusResponse(
             success=True,
-            connected=is_connected and session_record.is_active,
-            phone=session_record.phone,
-            user_id=session_record.user_id,
-            last_activity=session_record.last_activity.isoformat() if session_record.last_activity else None
+            connected=is_connected and session_record.get("is_active"),
+            phone=session_record.get("phone"),
+            user_id=session_record.get("user_id"),
+            last_activity=session_record.get("last_activity").isoformat() if session_record.get("last_activity") else None
         )
         
     except HTTPException:
@@ -337,7 +337,7 @@ async def send_message(
         verify_api_key(x_api_key)
         
         # Get session record
-        session_record = session_manager.get_session_by_id(request.session_id)
+        session_record = await session_manager.get_session_by_id(request.session_id)
         if not session_record:
             raise HTTPException(status_code=404, detail="Session not found")
         
@@ -350,7 +350,7 @@ async def send_message(
         )
         
         # Update activity
-        session_manager.update_session_activity(request.session_id)
+        await session_manager.update_session_activity(request.session_id)
         
         logger.info(f"Message sent for session {request.session_id}")
         
