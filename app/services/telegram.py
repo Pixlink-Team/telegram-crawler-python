@@ -4,6 +4,7 @@ import logging
 import os
 from datetime import datetime
 from typing import Dict, Optional, Tuple
+import base64
 
 from telethon import TelegramClient, events
 from telethon.errors import FloodWaitError, PasswordHashInvalidError, PhoneCodeInvalidError, SessionPasswordNeededError
@@ -28,7 +29,21 @@ class TelegramService:
     def _build_proxy(self):
         """Return proxy config tuple for MTProto if enabled."""
         if settings.use_mtproto_proxy and settings.mtproto_host and settings.mtproto_port and settings.mtproto_secret:
-            return (settings.mtproto_host, int(settings.mtproto_port), settings.mtproto_secret)
+            # Convert base64 secret to hex if needed
+            secret = settings.mtproto_secret
+            try:
+                # If it's base64, decode and convert to hex
+                if len(secret) == 22 or len(secret) == 24:  # base64 encoded 16 bytes
+                    secret_bytes = base64.b64decode(secret + "==")
+                    secret = secret_bytes.hex()
+                elif len(secret) != 32:  # not hex 16 bytes
+                    # Try to decode as base64 anyway
+                    secret_bytes = base64.b64decode(secret)
+                    secret = secret_bytes.hex()
+            except Exception as e:
+                logger.warning(f"Could not convert MTProto secret, using as-is: {e}")
+            
+            return (settings.mtproto_host, int(settings.mtproto_port), secret)
         return None
 
     def _ensure_session_directory(self):
