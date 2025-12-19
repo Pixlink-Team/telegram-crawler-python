@@ -7,6 +7,7 @@ from typing import Dict, Optional, Tuple
 
 from telethon import TelegramClient, events
 from telethon.errors import FloodWaitError, PasswordHashInvalidError, PhoneCodeInvalidError, SessionPasswordNeededError
+from telethon.network.connection import ConnectionTcpMTProxyRandomizedIntermediate
 from telethon.tl.types import User
 
 from app.config import settings
@@ -22,6 +23,13 @@ class TelegramService:
     def __init__(self):
         self.clients: Dict[str, TelegramClient] = {}
         self._ensure_session_directory()
+        self._proxy = self._build_proxy()
+
+    def _build_proxy(self):
+        """Return proxy config tuple for MTProto if enabled."""
+        if settings.use_mtproto_proxy and settings.mtproto_host and settings.mtproto_port and settings.mtproto_secret:
+            return (settings.mtproto_host, int(settings.mtproto_port), settings.mtproto_secret)
+        return None
 
     def _ensure_session_directory(self):
         """Ensure the session directory exists."""
@@ -34,7 +42,19 @@ class TelegramService:
     async def create_client(self, session_id: str) -> TelegramClient:
         """Create a new Telegram client for a session."""
         session_file = self._get_session_file_path(session_id)
-        client = TelegramClient(session_file, settings.telegram_api_id, settings.telegram_api_hash)
+        client_kwargs = {}
+        if self._proxy:
+            client_kwargs.update(
+                connection=ConnectionTcpMTProxyRandomizedIntermediate,
+                proxy=self._proxy,
+            )
+
+        client = TelegramClient(
+            session_file,
+            settings.telegram_api_id,
+            settings.telegram_api_hash,
+            **client_kwargs,
+        )
         self.clients[session_id] = client
         logger.info(f"Created Telegram client for session: {session_id}")
         return client

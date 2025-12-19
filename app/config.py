@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     # MongoDB
     mongodb_url: str = "mongodb://localhost:27017"
     mongodb_database: str = "telegram_service"
+
+    # MTProto proxy (optional)
+    use_mtproto_proxy: bool = False
+    mtproto_host: Optional[str] = None
+    mtproto_port: Optional[int] = None
+    mtproto_secret: Optional[str] = None
     
     # Security
     api_secret_key: str
